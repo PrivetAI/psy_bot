@@ -173,7 +173,7 @@ async def clear_user_history(db: AsyncSession, telegram_id: int) -> bool:
     """Очистить всю историю пользователя"""
     try:
         # Удаляем сообщения
-        await db.execute(
+        result = await db.execute(
             select(Message).where(Message.telegram_id == telegram_id)
         )
         messages = result.scalars().all()
@@ -202,6 +202,56 @@ async def clear_user_history(db: AsyncSession, telegram_id: int) -> bool:
         await db.rollback()
         return False
 
+
+async def get_or_create_active_session(db: AsyncSession, telegram_id: int) -> str:
+    """Получить или создать активную сессию"""
+    # Проверяем есть ли активная сессия (не старше 12 часов)
+    cutoff_time = datetime.utcnow() - timedelta(hours=12)
+    
+    result = await db.execute(
+        select(TherapySession)
+        .where(
+            and_(
+                TherapySession.telegram_id == telegram_id,
+                TherapySession.is_active == True,
+                TherapySession.started_at > cutoff_time
+            )
+        )
+        .order_by(desc(TherapySession.started_at))
+    )
+    
+    active_session = result.scalar_one_or_none()
+    
+    if active_session:
+        return active_session.session_id
+    else:
+        # Закрываем старые сессии
+        result = await db.execute(
+            select(TherapySession)
+            .where(
+                and_(
+                    TherapySession.telegram_id == telegram_id,
+                    TherapySession.is_active == True
+                )
+            )
+        )
+        old_sessions = result.scalars().all()
+        for session in old_sessions:
+            session.is_active = False
+            session.ended_at = datetime.utcnow()
+        
+        # Создаем новую сессию
+        new_session_id = str(uuid.uuid4())[:8]
+        new_session = TherapySession(
+            telegram_id=telegram_id,
+            session_id=new_session_id,
+            is_active=True
+        )
+        db.add(new_session)
+        await db.commit()
+        
+        return new_session_id
+    
 
 async def get_user_stats(db: AsyncSession, telegram_id: int) -> Dict:
     """Получить статистику пользователя"""
