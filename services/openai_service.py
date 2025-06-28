@@ -9,18 +9,40 @@ class OpenAIService:
     def __init__(self):
         self.client = openai.AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
         self.model = "gpt-3.5-turbo"
-        self.system_prompt = """Ты дружелюбный и полезный собеседник. Общайся естественно и по-человечески. 
-Отвечай на русском языке, если пользователь пишет на русском. Помогай пользователю и поддерживай приятную беседу.
-Будь вежливым, но не формальным. Можешь использовать эмодзи, но в меру."""
+        self.system_prompt = """Ты профессиональный психолог-консультант. Твоя роль - оказывать эмоциональную поддержку и помощь в работе с личными проблемами.
+
+ПРИНЦИПЫ РАБОТЫ:
+- Проявляй эмпатию и безусловное принятие
+- Задавай уточняющие вопросы для лучшего понимания
+- Используй техники активного слушания
+- Помогай клиенту самостоятельно находить решения
+- Не давай прямых советов, а направляй к осознанию
+- Поддерживай конфиденциальность беседы
+
+ТЕХНИКИ:
+- Рефлексия чувств ("Я слышу, что вы чувствуете...")
+- Перефразирование для прояснения
+- Открытые вопросы для исследования проблемы
+- Работа с когнитивными искажениями
+- Техники заземления при тревоге
+
+ВАЖНО:
+- При суицидальных мыслях - направляй к специалистам
+- При серьезных психических расстройствах - рекомендуй очную помощь
+- Не ставь диагнозы
+- Отвечай на русском языке
+- Будь теплым, но профессиональным
+
+Начинай каждую сессию с выяснения текущего состояния клиента."""
 
     async def get_response(self, user_message: str, conversation_context: List[Dict] = None) -> str:
         """Получить ответ от OpenAI GPT"""
         try:
             messages = [{"role": "system", "content": self.system_prompt}]
             
-            # Добавляем контекст предыдущих сообщений
+            # Добавляем контекст предыдущих сообщений (ограничиваем до 10 последних)
             if conversation_context:
-                messages.extend(conversation_context)
+                messages.extend(conversation_context[-10:])
             
             # Добавляем текущее сообщение пользователя
             messages.append({"role": "user", "content": user_message})
@@ -28,26 +50,18 @@ class OpenAIService:
             response = await self.client.chat.completions.create(
                 model=self.model,
                 messages=messages,
-                max_tokens=1000,
+                max_tokens=800,
                 temperature=0.7,
-                top_p=1,
-                frequency_penalty=0,
-                presence_penalty=0
+                top_p=0.9,
+                frequency_penalty=0.1,
+                presence_penalty=0.1
             )
             
             return response.choices[0].message.content
             
         except openai.APIError as e:
             logger.error(f"OpenAI API error: {e}")
-            return "Извините, произошла ошибка при обработке вашего сообщения. Попробуйте еще раз."
+            return "Извините, сейчас возникли технические сложности. Давайте попробуем продолжить нашу беседу через минуту."
         except Exception as e:
             logger.error(f"Unexpected error in OpenAI service: {e}")
-            return "Произошла неожиданная ошибка. Пожалуйста, попробуйте позже."
-
-    def set_system_prompt(self, prompt: str):
-        """Изменить системный промпт"""
-        self.system_prompt = prompt
-
-    def set_model(self, model: str):
-        """Изменить модель GPT"""
-        self.model = model
+            return "Произошла техническая ошибка. Я здесь и готов вас выслушать, как только проблема решится."
