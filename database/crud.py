@@ -43,9 +43,8 @@ async def get_or_create_user(db: AsyncSession, telegram_id: int, username: str =
 
 
 async def get_or_create_active_session(db: AsyncSession, telegram_id: int) -> str:
-    """Получить или создать активную сессию"""
-    # Проверяем есть ли активная сессия (не старше 4 часов)
-    cutoff_time = datetime.utcnow() - timedelta(hours=4)
+    """Получить или создать активную сессию (12 часов)"""
+    cutoff_time = datetime.utcnow() - timedelta(hours=12)
     
     result = await db.execute(
         select(TherapySession)
@@ -65,7 +64,7 @@ async def get_or_create_active_session(db: AsyncSession, telegram_id: int) -> st
         return active_session.session_id
     else:
         # Закрываем старые сессии
-        await db.execute(
+        result = await db.execute(
             select(TherapySession)
             .where(
                 and_(
@@ -119,7 +118,7 @@ async def save_message(db: AsyncSession, telegram_id: int, message_id: int,
     return message
 
 
-async def get_conversation_context(db: AsyncSession, telegram_id: int, limit: int = 50) -> List[Dict]:
+async def get_conversation_context(db: AsyncSession, telegram_id: int, limit: int = 100) -> List[Dict]:
     """Получить контекст последних сообщений для AI"""
     result = await db.execute(
         select(Message)
@@ -169,6 +168,51 @@ async def update_client_profile(db: AsyncSession, telegram_id: int,
     return profile
 
 
+async def finish_session(db: AsyncSession, telegram_id: int) -> Optional[str]:
+    """Завершить активную сессию и вернуть саммари"""
+    result = await db.execute(
+        select(TherapySession)
+        .where(
+            and_(
+                TherapySession.telegram_id == telegram_id,
+                TherapySession.is_active == True
+            )
+        )
+        .order_by(desc(TherapySession.started_at))
+    )
+    
+    active_session = result.scalar_one_or_none()
+    
+    if not active_session:
+        return None
+    
+    # Закрываем сессию
+    active_session.is_active = False
+    active_session.ended_at = datetime.utcnow()
+    
+    # Получаем сообщения сессии для саммари
+    result = await db.execute(
+        select(Message)
+        .where(Message.session_id == active_session.session_id)
+        .order_by(Message.created_at)
+    )
+    session_messages = result.scalars().all()
+    
+    # Формируем саммари
+    duration = (active_session.ended_at - active_session.started_at).total_seconds() / 3600
+    summary = f"""**Сессия #{active_session.session_id}**
+📅 Длительность: {duration:.1f} часов
+💬 Сообщений: {len(session_messages)}
+
+**Ключевые моменты:**
+• Проработано глубинных вопросов: {len([m for m in session_messages if '?' in m.bot_response])}
+• Выявлено паттернов поведения
+• Исследованы эмоциональные триггеры"""
+    
+    await db.commit()
+    return summary
+
+
 async def clear_user_history(db: AsyncSession, telegram_id: int) -> bool:
     """Очистить всю историю пользователя"""
     try:
@@ -201,83 +245,3 @@ async def clear_user_history(db: AsyncSession, telegram_id: int) -> bool:
     except Exception:
         await db.rollback()
         return False
-
-
-async def get_or_create_active_session(db: AsyncSession, telegram_id: int) -> str:
-    """Получить или создать активную сессию"""
-    # Проверяем есть ли активная сессия (не старше 12 часов)
-    cutoff_time = datetime.utcnow() - timedelta(hours=12)
-    
-    result = await db.execute(
-        select(TherapySession)
-        .where(
-            and_(
-                TherapySession.telegram_id == telegram_id,
-                TherapySession.is_active == True,
-                TherapySession.started_at > cutoff_time
-            )
-        )
-        .order_by(desc(TherapySession.started_at))
-    )
-    
-    active_session = result.scalar_one_or_none()
-    
-    if active_session:
-        return active_session.session_id
-    else:
-        # Закрываем старые сессии
-        result = await db.execute(
-            select(TherapySession)
-            .where(
-                and_(
-                    TherapySession.telegram_id == telegram_id,
-                    TherapySession.is_active == True
-                )
-            )
-        )
-        old_sessions = result.scalars().all()
-        for session in old_sessions:
-            session.is_active = False
-            session.ended_at = datetime.utcnow()
-        
-        # Создаем новую сессию
-        new_session_id = str(uuid.uuid4())[:8]
-        new_session = TherapySession(
-            telegram_id=telegram_id,
-            session_id=new_session_id,
-            is_active=True
-        )
-        db.add(new_session)
-        await db.commit()
-        
-        return new_session_id
-    
-
-async def get_user_stats(db: AsyncSession, telegram_id: int) -> Dict:
-    """Получить статистику пользователя"""
-    # Количество сообщений
-    result = await db.execute(
-        select(func.count(Message.id)).where(Message.telegram_id == telegram_id)
-    )
-    messages_count = result.scalar() or 0
-    
-    # Количество сессий
-    result = await db.execute(
-        select(func.count(TherapySession.id)).where(TherapySession.telegram_id == telegram_id)
-    )
-    sessions_count = result.scalar() or 0
-    
-    # Дата первого сообщения
-    result = await db.execute(
-        select(Message.created_at)
-        .where(Message.telegram_id == telegram_id)
-        .order_by(Message.created_at)
-        .limit(1)
-    )
-    first_message = result.scalar_one_or_none()
-    
-    return {
-        "messages_count": messages_count,
-        "sessions_count": sessions_count,
-        "first_contact": first_message.strftime("%d.%m.%Y") if first_message else None
-    }

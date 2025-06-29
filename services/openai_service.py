@@ -60,7 +60,8 @@ class OpenAIService:
             # Добавляем профиль клиента в контекст
             if client_profile:
                 profile_context = self._format_profile_context(client_profile)
-                messages.append({"role": "system", "content": profile_context})
+                if profile_context:
+                    messages.append({"role": "system", "content": profile_context})
             
             # Добавляем историю сообщений (последние 30 для контекста)
             if conversation_context:

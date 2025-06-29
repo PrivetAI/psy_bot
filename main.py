@@ -5,12 +5,13 @@ import signal
 from dotenv import load_dotenv
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 from database.database import init_db
-from bot.handlers import start_command, help_command, clear_command, handle_message, error_handler
+from bot.handlers import (
+    start_command, help_command, clear_command, 
+    finish_session_command, handle_message, error_handler
+)
 
-# Загружаем переменные окружения
 load_dotenv()
 
-# Настройка логирования
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=getattr(logging, os.getenv('LOG_LEVEL', 'INFO'))
@@ -20,7 +21,6 @@ logger = logging.getLogger(__name__)
 
 async def main():
     """Основная функция приложения"""
-    # Проверяем наличие необходимых переменных окружения
     telegram_token = os.getenv("TELEGRAM_BOT_TOKEN")
     openai_key = os.getenv("OPENAI_API_KEY")
     
@@ -40,7 +40,6 @@ async def main():
         logger.error(f"Ошибка инициализации базы данных: {e}")
         return
     
-    # Создаем приложение Telegram бота
     logger.info("Создание Telegram бота...")
     application = Application.builder().token(telegram_token).build()
     
@@ -48,6 +47,7 @@ async def main():
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CommandHandler("clear", clear_command))
+    application.add_handler(CommandHandler("finishsession", finish_session_command))
     
     # Добавляем обработчик текстовых сообщений
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
@@ -58,7 +58,6 @@ async def main():
     # Инициализируем приложение
     await application.initialize()
     
-    # Запускаем бота
     logger.info("Бот запущен и готов к работе!")
     
     try:
@@ -68,7 +67,6 @@ async def main():
             drop_pending_updates=True
         )
         
-        # Ждем сигнал остановки
         stop_event = asyncio.Event()
         
         def signal_handler(signum, frame):
@@ -83,7 +81,6 @@ async def main():
     except Exception as e:
         logger.error(f"Ошибка в работе бота: {e}")
     finally:
-        # Корректно останавливаем приложение
         logger.info("Остановка бота...")
         await application.updater.stop()
         await application.stop()
